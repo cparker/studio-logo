@@ -44,3 +44,12 @@ Wire up the LEDs and ESP32
 Mount the LED strips to the brackets (hot glue or screws)
 
 Upload the code to the ESP32
+
+CAD model front
+![cad model front](./cad-model-front.png)
+CAD model back
+![cad model front](./cad-model-back.png)
+
+CAD model video
+<iframe width="560" height="315" src="https://youtu.be/u030uRLA1Uc" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
