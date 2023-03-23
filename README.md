@@ -50,5 +50,6 @@ CAD model front
 CAD model back
 ![cad model front](./cad-model-back.png)
 
-CAD model video
+CAD model video</br>
+
 [![CAD model video](https://img.youtube.com/vi/u030uRLA1Uc/default.jpg)](https://youtu.be/u030uRLA1Uc)
