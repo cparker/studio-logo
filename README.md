@@ -53,3 +53,4 @@ CAD model back
 CAD model video
 <iframe width="560" height="315" src="https://youtu.be/u030uRLA1Uc" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
+[![CAD model video](https://img.youtube.com/vi/nTQUwghvy5Q/default.jpg)](https://youtu.be/u030uRLA1Uc)
