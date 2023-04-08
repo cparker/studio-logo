@@ -3,8 +3,14 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
+#include <map>
+#include <string>
+#include <vector>
+#include <algorithm>
 
 #include "secrets.h"
+#include "ColorTransition.h"
+
 
 // Create an instance of the Preferences library
 Preferences preferences;
@@ -25,70 +31,87 @@ const char* mqtt_topic_palette = "studio-logo/palette";
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
 
+// this is where state of each LED is stored
 CRGB myleds[NUM_LEDS];
 
-/*
- 0 default, cycle right
- 1 cycle left
- 2 cycle right
- 3 still
-*/
-uint8_t mode = 0;
 
 // some simple color definitions
 CRGB blue(0, 0, 255);
 CRGB green(0, 255, 0);
-CRGB lighterGreen(0, 255, 127);
+CRGB lighterGreen(20, 255, 20);
 CRGB yellow(255, 255, 0);
 CRGB red(255, 0, 0);
 CRGB orange(255, 165, 0);
 CRGB purple(128, 0, 128);
 
-// set color defaults
-CRGB section1Default = blue;
-CRGB section2Default = green;
-CRGB rightEarDefault = lighterGreen;
-CRGB section3Default = yellow;
-CRGB section4Default = red;
-CRGB leftEarDefault = orange;
-CRGB section5Default = blue;
+struct LEDSection {
+  int firstLEDIndex;
+  int lastLEDIndex;
+  float brightness;
+};
 
-// active colors
-CRGB section1 = section1Default;
-CRGB section2 = section2Default;
-CRGB rightEar = rightEarDefault;
-CRGB section3 = section3Default;
-CRGB section4 = section4Default;
-CRGB leftEar = leftEarDefault;
-CRGB section5 = section5Default;
+const std::string mainSectionNamesAntiClock[] = {"section01", "section02", "section03", "section04", "section05"};
 
-CRGB sectionColor[] = {section1, section2, rightEar, section3,
-                       section4, leftEar,  section5};
-uint8_t sectionNoEarsColor[] = {section1, section2, section3, section4,
-                                section5};
+const float defaultMainSectionBrightness = 0.25;
+const float defaultEarSectionBrightness = 1.0;
 
-uint32_t defaultInterval = 5000;
-uint8_t defaultFade = 500;
+std::map<std::string, LEDSection> namedSections = {
+  {"section01", {0, 7, defaultMainSectionBrightness}},
+  {"section02", {8, 15, defaultMainSectionBrightness}},
+  {"rightEar", {16, 17, defaultEarSectionBrightness}},
+  {"section03", {18, 25, defaultMainSectionBrightness}},
+  {"section04", {26, 33, defaultMainSectionBrightness}},
+  {"leftEar", {34, 35, defaultEarSectionBrightness}},
+  {"section05", {36, 43, defaultMainSectionBrightness}},
+};
 
-// Arrays for section LED counts and brightness
-const uint8_t sectionLedCounts[] = {8, 8, 2, 8, 8, 2, 8};
+/*
+ 0 still
+ 1 cycle right
+ 2 cycle left
+*/
+uint8_t mode = 0;
+
+std::map<std::string, CRGB> namedColors = {
+  {"blue", blue},
+  {"green", green},
+  {"lighterGreen", lighterGreen},
+  {"yellow", yellow},
+  {"red", red},
+  {"orange", orange},
+  {"purple", purple},
+};
+
+// maintain state of sections to color name, separate from the real state in myleds
+std::map<std::string, std::string> currentSectionColors = {};
+
+// define the anti-clockwise color rotation order for the main sections (not ears)
+const uint8_t mainSectionCount = 5;
+const std::string mainSectionAntiClockColorOrder[] = {"blue", "green", "yellow", "red", "purple"};
+
+// define the ear color rotation (L to R)
+const std::string earColorOrder[] = {"orange", "lighterGreen"};
+
+const uint32_t transitionInterval = 5000; // 5 seconds
+uint32_t lastTransitionTime = 0;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
 void setup() {
   Serial.begin(115200);
-  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(myleds, NUM_LEDS)
-      .setCorrection(TypicalLEDStrip);
-  FastLED.setBrightness(255);
+  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(myleds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   randomSeed(analogRead(0));
+  
+  // limit my draw to 1A at 5v of power draw
+  FastLED.setMaxPowerInVoltsAndMilliamps(5,1000);
 
   setupWifi();
 
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(mqttCallback);
 
-  setDefaults();
+  setStartupColors();
   restoreMode();
 }
 
@@ -106,62 +129,62 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   memcpy(payload_str, payload, length);
   payload_str[length] = '\0';
 
-  // Parse JSON data
-  StaticJsonDocument<256> doc;
-  DeserializationError error = deserializeJson(doc, payload_str);
+  // // Parse JSON data
+  // StaticJsonDocument<256> doc;
+  // DeserializationError error = deserializeJson(doc, payload_str);
 
-  if (error) {
-    Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
-    return;
-  }
+  // if (error) {
+  //   Serial.print(F("deserializeJson() failed: "));
+  //   Serial.println(error.f_str());
+  //   return;
+  // }
 
-  if (strcmp(topic, "studio-logo/palette") == 0) {
-    // Parse and set the global variables for palette
-    JsonArray arr;
+  // if (strcmp(topic, "studio-logo/palette") == 0) {
+  //   // Parse and set the global variables for palette
+  //   JsonArray arr;
 
-    arr = doc["section1"];
-    section1 = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["section1"];
+  //   section1 = CRGB(arr[0], arr[1], arr[2]);
 
-    arr = doc["section2"];
-    section2 = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["section2"];
+  //   section2 = CRGB(arr[0], arr[1], arr[2]);
 
-    arr = doc["rightEar"];
-    rightEar = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["rightEar"];
+  //   rightEar = CRGB(arr[0], arr[1], arr[2]);
 
-    arr = doc["section3"];
-    section3 = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["section3"];
+  //   section3 = CRGB(arr[0], arr[1], arr[2]);
 
-    arr = doc["section4"];
-    section4 = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["section4"];
+  //   section4 = CRGB(arr[0], arr[1], arr[2]);
 
-    arr = doc["leftEar"];
-    leftEar = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["leftEar"];
+  //   leftEar = CRGB(arr[0], arr[1], arr[2]);
 
-    arr = doc["section5"];
-    section5 = CRGB(arr[0], arr[1], arr[2]);
+  //   arr = doc["section5"];
+  //   section5 = CRGB(arr[0], arr[1], arr[2]);
 
-    // Save the color palette to NVS
-    preferences.begin(appName, false);
-    preferences.putBytes("section1", &section1, sizeof(CRGB));
-    preferences.putBytes("section2", &section2, sizeof(CRGB));
-    preferences.putBytes("rightEar", &rightEar, sizeof(CRGB));
-    preferences.putBytes("section3", &section3, sizeof(CRGB));
-    preferences.putBytes("section4", &section4, sizeof(CRGB));
-    preferences.putBytes("leftEar", &leftEar, sizeof(CRGB));
-    preferences.putBytes("section5", &section5, sizeof(CRGB));
-    preferences.end();
-  } else if (strcmp(topic, "studio-logo/mode") == 0) {
-    // Parse and set the global variable for mode
-    mode = doc["mode"];
+  //   // Save the color palette to NVS
+  //   preferences.begin(appName, false);
+  //   preferences.putBytes("section1", &section1, sizeof(CRGB));
+  //   preferences.putBytes("section2", &section2, sizeof(CRGB));
+  //   preferences.putBytes("rightEar", &rightEar, sizeof(CRGB));
+  //   preferences.putBytes("section3", &section3, sizeof(CRGB));
+  //   preferences.putBytes("section4", &section4, sizeof(CRGB));
+  //   preferences.putBytes("leftEar", &leftEar, sizeof(CRGB));
+  //   preferences.putBytes("section5", &section5, sizeof(CRGB));
+  //   preferences.end();
+  // } else if (strcmp(topic, "studio-logo/mode") == 0) {
+  //   // Parse and set the global variable for mode
+  //   mode = doc["mode"];
 
-    // Save the mode to NVS
-    preferences.begin(appName, false);
-    preferences.putUChar("mode", mode);
-    preferences.end();
-  } else {
-    Serial.println(F("Unknown topic"));
-  }
+  //   // Save the mode to NVS
+  //   preferences.begin(appName, false);
+  //   preferences.putUChar("mode", mode);
+  //   preferences.end();
+  // } else {
+  //   Serial.println(F("Unknown topic"));
+  // }
 }
 
 void mqttReconnect() {
@@ -203,159 +226,196 @@ void setupWifi() {
   delay(5000);
 }
 
-void setSection1RGB(CRGB color) { fill_solid(myleds, 8, color); }
 
-void setSection2RGB(CRGB color) { fill_solid(myleds + 8, 8, color); }
 
-void setRightEarRGB(CRGB color) { fill_solid(myleds + 16, 2, color); }
+void setSectionToColorByName(std::string sectionName, CRGB color) {
+    LEDSection section = namedSections[sectionName];
+    int firstLED = section.firstLEDIndex;
+    int lastLED = section.lastLEDIndex;
+    int count = lastLED - firstLED + 1;
+    float brightness = section.brightness;
 
-void setSection3RGB(CRGB color) { fill_solid(myleds + 18, 8, color); }
+    // Scale down the R, G, and B values by the brightness factor
+    CRGB adjustedColor = CRGB(round(color.r * brightness), round(color.g * brightness), round(color.b * brightness));
 
-void setSection4RGB(CRGB color) { fill_solid(myleds + 26, 8, color); }
+    // Set the color of the specified range of LEDs
+    fill_solid(myleds + firstLED, count, adjustedColor);
 
-void setLeftEarRGB(CRGB color) { fill_solid(myleds + 34, 2, color); }
+    Serial.print("Set section ");
+    Serial.print(sectionName.c_str());
+    Serial.print(" to color ");
+    printCRGB(adjustedColor);
+    Serial.println();
+}
 
-void setSection5RGB(CRGB color) { fill_solid(myleds + 36, 8, color); }
 
-void cycleLeft() {
-  static uint32_t prevMillis = 0;
-  uint32_t currentMillis = millis();
-  uint32_t interval = 5000;
-  uint32_t fadeDuration = 500;
 
-  if (currentMillis - prevMillis >= interval) {
-    prevMillis = currentMillis;
 
-    // TODO:
-    Serial.println("Cycling left");
+void setStartupColors() {
+  // for each color name in mainSectionAntiClockColorOrder
+  for(int i = 0; i < mainSectionCount; i++) {
+    // get the color name
+    std::string colorName = mainSectionAntiClockColorOrder[i];
+    // get the color
+    CRGB color = namedColors[colorName];
+    
+    std::string sectionName = mainSectionNamesAntiClock[i];
+    // set the section to the color
+    setSectionToColorByName(sectionName, color);
+
+    // update currentSectionColors
+    currentSectionColors[sectionName] = color;
+  }
+
+  // do the same for the ears
+  for(int i = 0; i < 2; i++) {
+    const std::string earSections[] = {"leftEar", "rightEar"};
+    std::string colorName = earColorOrder[i];
+    CRGB color = namedColors[colorName];
+    std::string sectionName = earSections[i];
+    setSectionToColorByName(sectionName, color);
+    currentSectionColors[sectionName] = color;
   }
 }
 
-void cycleRight() {
-  Serial.println("Cycling right");
-  static uint32_t prevMillis = 0;
-  uint32_t currentMillis = millis();
-  uint32_t interval = 5000;
-  uint32_t fadeDuration = 128;
+// struct ColorTransition {
+//   std::string sectionName;
+//   CRGB startColor;
+//   CRGB endColor;
+// };
 
-  if (currentMillis - prevMillis >= interval) {
-    prevMillis = currentMillis;
+void transitionColors(const std::vector<ColorTransition>& transitions, uint32_t duration) {
+  uint32_t startTime = millis();
+  uint32_t elapsedTime = 0;
+  float ratio;
 
-    // TODO:
-    Serial.println("Cycling right");
+  while (elapsedTime < duration) {
+    elapsedTime = millis() - startTime;
+    ratio = (float)elapsedTime / (float)duration;
 
-    CRGB startColor1 = CRGB::Red;
-    CRGB endColor1 = CRGB::Yellow;
+    for (const auto& transition : transitions) {
+      LEDSection section = namedSections[transition.sectionName];
 
-    CRGB startColor2 = CRGB::Green;
-    CRGB endColor2 = CRGB::Purple;
+      CRGB currentColor;
+      currentColor.r = transition.startColor.r + (transition.endColor.r - transition.startColor.r) * ratio;
+      currentColor.g = transition.startColor.g + (transition.endColor.g - transition.startColor.g) * ratio;
+      currentColor.b = transition.startColor.b + (transition.endColor.b - transition.startColor.b) * ratio;
 
-    uint16_t duration = 1000;  // Transition duration in milliseconds
-    uint8_t numSteps = 128;    // Number of steps in the transition
-
-    for (uint8_t step = 0; step < numSteps; step++) {
-      // Transition section1 (first 8 LEDs) from red to yellow
-      transitionColor(startColor1, endColor1, step, numSteps, 0, 7, myleds);
-
-      // Transition section2 (second 8 LEDs) from green to purple
-      transitionColor(startColor2, endColor2, step, numSteps, 8, 15, myleds);
-
-      FastLED.show();
-      FastLED.delay(duration / numSteps);
+      for (int i = section.firstLEDIndex; i <= section.lastLEDIndex; ++i) {
+        // Set the currentColor for each LED in the specified section
+        myleds[i] = currentColor;
+      }
     }
 
-    delay(2000);  // Pause for 2 seconds between transitions
+    FastLED.show();
+    FastLED.delay(10); // You can adjust the delay for smoother/faster transitions
+  }
+
+  // the transition is complete, update the currentSectionColors
+  for (const auto& transition : transitions) {
+    currentSectionColors[transition.sectionName] = transition.endColor;
+  }
+
+}
+
+int findColorIndex(const std::string& colorName) {
+  // Find the iterator pointing to the color name in the array
+  const auto it = std::find(std::begin(mainSectionAntiClockColorOrder),
+                            std::end(mainSectionAntiClockColorOrder),
+                            colorName);
+
+  // Check if the color was found
+  if (it != std::end(mainSectionAntiClockColorOrder)) {
+    // Return the index of the found color
+    return std::distance(std::begin(mainSectionAntiClockColorOrder), it);
+  } else {
+    // Return -1 if the color was not found
+    return -1;
   }
 }
 
-void transitionColor(CRGB startColor, CRGB endColor, uint8_t currentStep,
-                     uint8_t numSteps, uint8_t startIndex, uint8_t endIndex,
-                     CRGB* leds) {
-  CRGB currentColor =
-      startColor.lerp8(endColor, (currentStep * 255) / (numSteps - 1));
+void cycleAntiClockwise() {
 
-  for (uint8_t i = startIndex; i <= endIndex; i++) {
-    leds[i] = currentColor;
+  // Create a vector to store the ColorTransition objects
+  std::vector<ColorTransition> transitions;
+
+  for (const auto& sectionName : mainSectionNamesAntiClock) {
+    // create a ColorTransition for section1
+    ColorTransition sectionTransition;
+    sectionTransition.sectionName = sectionName;
+    std::string startColorName = currentSectionColors[sectionName];
+    // get the index of the current color in the mainSectionAntiClockColorOrder
+    int currentIndex = findColorIndex(startColorName);
+    // next index of color in mainSectionAntiClockColorOrder
+    int nextIndex = (currentIndex + 1) % mainSectionCount;
+    // get the next color name
+    std::string nextColorName = mainSectionAntiClockColorOrder[nextIndex];
+
+    // next color value
+    CRGB startColor = namedColors[startColorName];
+    CRGB nextColor = namedColors[nextColorName];
+    sectionTransition.startColor = startColor;
+    sectionTransition.endColor = nextColor;
+
+    // add the transition to the vector
+    transitions.push_back(sectionTransition);
+  }
+
+  // now transition the colors
+  transitionColors(transitions, transitionInterval);
+}
+
+void printCRGB(const CRGB& color) {
+  Serial.print("R: ");
+  Serial.print(color.r);
+  Serial.print(", G: ");
+  Serial.print(color.g);
+  Serial.print(", B: ");
+  Serial.print(color.b);
+}
+
+void printAllLEDColors(const CRGB* leds, int numLEDs) {
+  for (int i = 0; i < numLEDs; i++) {
+    Serial.print("LED ");
+    Serial.print(i);
+    Serial.print(": ");
+    printCRGB(leds[i]);
+    Serial.println();
   }
 }
 
-void still() {
-  Serial.println("Still");
-
-  setSection1RGB(section1);
-  setSection2RGB(section2);
-  setRightEarRGB(rightEar);
-  setSection3RGB(section3);
-  setSection4RGB(section4);
-  setLeftEarRGB(leftEar);
-  setSection5RGB(section5);
-
-  delay(1000);
-
-  FastLED.show();
-}
-
-void setDefaults() {
-  setSection1RGB(section1Default);
-  setSection2RGB(section2Default);
-  setRightEarRGB(rightEarDefault);
-  setSection3RGB(section3Default);
-  setSection4RGB(section4Default);
-  setLeftEarRGB(leftEarDefault);
-  setSection5RGB(section5Default);
-
-  // set brightness levels
-  // section 1
-  for (int ledIndex = 0; ledIndex < 8; ledIndex++) {
-    myleds[ledIndex].nscale8(128);
-  }
-
-  // section 2
-  for (int ledIndex = 8; ledIndex < 16; ledIndex++) {
-    myleds[ledIndex].nscale8(128);
-  }
-
-  // rightEar
-  for (int ledIndex = 16; ledIndex < 18; ledIndex++) {
-    myleds[ledIndex].nscale8(255);
-  }
-
-  // section 3
-  for (int ledIndex = 18; ledIndex < 26; ledIndex++) {
-    myleds[ledIndex].nscale8(128);
-  }
-
-  // section 4
-  for (int ledIndex = 26; ledIndex < 34; ledIndex++) {
-    myleds[ledIndex].nscale8(128);
-  }
-
-  // leftEar
-  for (int ledIndex = 34; ledIndex < 36; ledIndex++) {
-    myleds[ledIndex].nscale8(255);
-  }
-
-  // section 5
-  for (int ledIndex = 36; ledIndex < 44; ledIndex++) {
-    myleds[ledIndex].nscale8(128);
+void doTransition(int mode) {
+  // Determine what to do based on the mode
+  Serial.print("transitioning for mode: ");
+  Serial.println(mode);
+  switch (mode) {
+    case 0:
+      // Do something for mode 0
+      setStartupColors();
+      break;
+    case 1:
+      // Do something for mode 1
+      break;
+    // Add more cases for other modes as needed
+    case 2:
+      break;
+    case 3:
+      cycleAntiClockwise();
+      break;
+    default:
+      break;
   }
 }
 
 void loop() {
-  switch (mode) {
-    case 0:
-      cycleRight();
-      break;
-    case 1:
-      cycleLeft();
-      break;
-    case 2:
-      still();
-      break;
-    default:
-      cycleRight();
-      break;
-  }
+
+ uint32_t currentTime = millis();
+
+  if (currentTime - lastTransitionTime >= transitionInterval) {
+    doTransition(0); // just startup colors for now
+    printAllLEDColors(myleds, NUM_LEDS);
+    lastTransitionTime = currentTime;
+  }  
 
   FastLED.show();
   FastLED.delay(10);  // 10 ms delay for smooth animation
