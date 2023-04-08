@@ -92,7 +92,12 @@ const std::string mainSectionAntiClockColorOrder[] = {"blue", "green", "yellow",
 // define the ear color rotation (L to R)
 const std::string earColorOrder[] = {"orange", "lighterGreen"};
 
-const uint32_t transitionInterval = 5000; // 5 seconds
+// the amount of ms that the color transition should take
+const uint32_t transitionDuration = 500;
+
+// how often the color changes in ms
+const uint32_t transitionInterval = 10000;
+
 uint32_t lastTransitionTime = 0;
 
 WiFiClient espClient;
@@ -241,11 +246,11 @@ void setSectionToColorByName(std::string sectionName, CRGB color) {
     // Set the color of the specified range of LEDs
     fill_solid(myleds + firstLED, count, adjustedColor);
 
-    Serial.print("Set section ");
-    Serial.print(sectionName.c_str());
-    Serial.print(" to color ");
-    printCRGB(adjustedColor);
-    Serial.println();
+    // Serial.print("Set section ");
+    // Serial.print(sectionName.c_str());
+    // Serial.print(" to color ");
+    // printCRGB(adjustedColor);
+    // Serial.println();
 }
 
 
@@ -264,7 +269,7 @@ void setStartupColors() {
     setSectionToColorByName(sectionName, color);
 
     // update currentSectionColors
-    currentSectionColors[sectionName] = color;
+    currentSectionColors[sectionName] = colorName;
   }
 
   // do the same for the ears
@@ -289,6 +294,9 @@ void transitionColors(const std::vector<ColorTransition>& transitions, uint32_t 
   uint32_t elapsedTime = 0;
   float ratio;
 
+  // Serial.println("--");
+  // Serial.println("--");
+  // Serial.println("START");
   while (elapsedTime < duration) {
     elapsedTime = millis() - startTime;
     ratio = (float)elapsedTime / (float)duration;
@@ -296,25 +304,52 @@ void transitionColors(const std::vector<ColorTransition>& transitions, uint32_t 
     for (const auto& transition : transitions) {
       LEDSection section = namedSections[transition.sectionName];
 
-      CRGB currentColor;
-      currentColor.r = transition.startColor.r + (transition.endColor.r - transition.startColor.r) * ratio;
-      currentColor.g = transition.startColor.g + (transition.endColor.g - transition.startColor.g) * ratio;
-      currentColor.b = transition.startColor.b + (transition.endColor.b - transition.startColor.b) * ratio;
+      // if (transition.sectionName == "section02") {
+      //   Serial.print("Transitioning section ");
+      //   Serial.print(transition.sectionName.c_str());
+      //   Serial.print(" from ");
+      //   printCRGB(transition.startColor);
+      //   Serial.print(" to ");
+      //   printCRGB(transition.endColor);
+      //   Serial.print(" at ratio ");
+      //   Serial.println(ratio);
+      // }
 
-      for (int i = section.firstLEDIndex; i <= section.lastLEDIndex; ++i) {
-        // Set the currentColor for each LED in the specified section
-        myleds[i] = currentColor;
+
+      CRGB currentColor;
+      if (ratio < 1.00) {
+        currentColor.r = transition.startColor.r + (transition.endColor.r - transition.startColor.r) * ratio;
+        currentColor.g = transition.startColor.g + (transition.endColor.g - transition.startColor.g) * ratio;
+        currentColor.b = transition.startColor.b + (transition.endColor.b - transition.startColor.b) * ratio;
+      } else {
+        currentColor = transition.endColor;
       }
+
+      // if (transition.sectionName == "section02") {
+      //   Serial.print("Current color: ");
+      //   printCRGB(currentColor);
+      //   Serial.println();
+      // }
+
+      // for (int i = section.firstLEDIndex; i <= section.lastLEDIndex; ++i) {
+      //   // Set the currentColor for each LED in the specified section
+      //   myleds[i] = currentColor;
+      // }
+      setSectionToColorByName(transition.sectionName, currentColor);
     }
 
     FastLED.show();
-    FastLED.delay(10); // You can adjust the delay for smoother/faster transitions
+    FastLED.delay(5); // You can adjust the delay for smoother/faster transitions
   }
+  // Serial.println("section02 is now");
+  // for (int i = namedSections["section02"].firstLEDIndex; i <= namedSections["section02"].lastLEDIndex; ++i) {
+  //   // Set the currentColor for each LED in the specified section
+  //   printCRGB(myleds[i]);
+  // }
 
-  // the transition is complete, update the currentSectionColors
-  for (const auto& transition : transitions) {
-    currentSectionColors[transition.sectionName] = transition.endColor;
-  }
+  // Serial.println("--");
+  // Serial.println("--");
+  // Serial.println("END");
 
 }
 
@@ -339,6 +374,8 @@ void cycleAntiClockwise() {
   // Create a vector to store the ColorTransition objects
   std::vector<ColorTransition> transitions;
 
+  std::map<std::string, std::string> newColorsBySection = {};
+
   for (const auto& sectionName : mainSectionNamesAntiClock) {
     // create a ColorTransition for section1
     ColorTransition sectionTransition;
@@ -347,7 +384,8 @@ void cycleAntiClockwise() {
     // get the index of the current color in the mainSectionAntiClockColorOrder
     int currentIndex = findColorIndex(startColorName);
     // next index of color in mainSectionAntiClockColorOrder
-    int nextIndex = (currentIndex + 1) % mainSectionCount;
+    // int nextIndex = (currentIndex - 1) % mainSectionCount;
+    int nextIndex = currentIndex == 0 ? mainSectionCount - 1 : currentIndex - 1;
     // get the next color name
     std::string nextColorName = mainSectionAntiClockColorOrder[nextIndex];
 
@@ -357,12 +395,29 @@ void cycleAntiClockwise() {
     sectionTransition.startColor = startColor;
     sectionTransition.endColor = nextColor;
 
+    newColorsBySection[sectionName] = nextColorName;
+
+    Serial.print("Transitioning section ");
+    Serial.print(sectionTransition.sectionName.c_str());
+    Serial.print(" from ");
+    Serial.print(startColorName.c_str());
+    Serial.print(" ");
+    printCRGB(sectionTransition.startColor);
+    Serial.print(", to ");
+    Serial.print(nextColorName.c_str());
+    Serial.print(" ");
+    printCRGB(sectionTransition.endColor);
+    Serial.println();
+
     // add the transition to the vector
     transitions.push_back(sectionTransition);
   }
 
   // now transition the colors
-  transitionColors(transitions, transitionInterval);
+  transitionColors(transitions, transitionDuration);
+
+  // after the transition, update the currentSectionColors from newColorsBySection
+  currentSectionColors = newColorsBySection;
 }
 
 void printCRGB(const CRGB& color) {
@@ -381,6 +436,15 @@ void printAllLEDColors(const CRGB* leds, int numLEDs) {
     Serial.print(": ");
     printCRGB(leds[i]);
     Serial.println();
+  }
+}
+
+void printCurrentSectionColors(const std::map<std::string, std::string>& currentSectionColors) {
+  for (const auto& entry : currentSectionColors) {
+    Serial.print("Section: ");
+    Serial.print(entry.first.c_str());
+    Serial.print(", Color: ");
+    Serial.println(entry.second.c_str());
   }
 }
 
@@ -407,15 +471,32 @@ void doTransition(int mode) {
   }
 }
 
+int loopCount = 0;
 void loop() {
 
  uint32_t currentTime = millis();
 
   if (currentTime - lastTransitionTime >= transitionInterval) {
-    doTransition(0); // just startup colors for now
+    Serial.println("before transition, current colors:");
+    printCurrentSectionColors(currentSectionColors);
+    Serial.println("leds before transition:");
     printAllLEDColors(myleds, NUM_LEDS);
+    Serial.println("");
+
+    doTransition(3);
+
+    Serial.println("");
+
+    Serial.println("after transition , current colors:");
+    printCurrentSectionColors(currentSectionColors);
+    printAllLEDColors(myleds, NUM_LEDS);
+
+    // printAllLEDColors(myleds, NUM_LEDS);
     lastTransitionTime = currentTime;
-  }  
+  }  else {
+    Serial.println("skipped transition for debugging!");
+    delay(10000);
+  }
 
   FastLED.show();
   FastLED.delay(10);  // 10 ms delay for smooth animation
