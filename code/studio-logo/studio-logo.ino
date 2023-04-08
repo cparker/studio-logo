@@ -369,7 +369,7 @@ int findColorIndex(const std::string& colorName) {
   }
 }
 
-void cycleAntiClockwise() {
+void rotateColors(bool antiClockwise) {
 
   // Create a vector to store the ColorTransition objects
   std::vector<ColorTransition> transitions;
@@ -385,7 +385,12 @@ void cycleAntiClockwise() {
     int currentIndex = findColorIndex(startColorName);
     // next index of color in mainSectionAntiClockColorOrder
     // int nextIndex = (currentIndex - 1) % mainSectionCount;
-    int nextIndex = currentIndex == 0 ? mainSectionCount - 1 : currentIndex - 1;
+    int nextIndex = -1;
+    if (antiClockwise) {
+      nextIndex = currentIndex == 0 ? mainSectionCount - 1 : currentIndex - 1;
+    } else {
+      nextIndex = (currentIndex + 1) % mainSectionCount;
+    }
     // get the next color name
     std::string nextColorName = mainSectionAntiClockColorOrder[nextIndex];
 
@@ -462,9 +467,10 @@ void doTransition(int mode) {
       break;
     // Add more cases for other modes as needed
     case 2:
+      rotateColors(false);
       break;
     case 3:
-      cycleAntiClockwise();
+      rotateColors(true);
       break;
     default:
       break;
@@ -477,25 +483,22 @@ void loop() {
  uint32_t currentTime = millis();
 
   if (currentTime - lastTransitionTime >= transitionInterval) {
-    Serial.println("before transition, current colors:");
-    printCurrentSectionColors(currentSectionColors);
-    Serial.println("leds before transition:");
-    printAllLEDColors(myleds, NUM_LEDS);
-    Serial.println("");
+    // Serial.println("before transition, current colors:");
+    // printCurrentSectionColors(currentSectionColors);
+    // Serial.println("leds before transition:");
+    // printAllLEDColors(myleds, NUM_LEDS);
+    // Serial.println("");
 
-    doTransition(3);
+    doTransition(mode);
 
-    Serial.println("");
+    // Serial.println("");
 
-    Serial.println("after transition , current colors:");
-    printCurrentSectionColors(currentSectionColors);
-    printAllLEDColors(myleds, NUM_LEDS);
+    // Serial.println("after transition , current colors:");
+    // printCurrentSectionColors(currentSectionColors);
+    // printAllLEDColors(myleds, NUM_LEDS);
 
     // printAllLEDColors(myleds, NUM_LEDS);
     lastTransitionTime = currentTime;
-  }  else {
-    Serial.println("skipped transition for debugging!");
-    delay(10000);
   }
 
   FastLED.show();
